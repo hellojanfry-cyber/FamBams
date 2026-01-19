@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FamBams - Family Scheduling</title>
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+        import { getFirestore, collection, addDoc, getDocs, query, where, updateDoc, doc, orderBy } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBmw0dwxCvPeUtMxsgZtRKuDIlKWDBzwLU",
+            authDomain: "fambams.firebaseapp.com",
+            projectId: "fambams",
+            storageBucket: "fambams.firebasestorage.app",
+            messagingSenderId: "587210522120",
+            appId: "1:587210522120:web:53fd3d963503eeaf8adbbd"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let currentUser = null;
+        let userData = null;
+
+        // Auth state listener
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUser = user;
+                const usersRef = collection(db, 'users');
+                const q = query(usersRef, where('uid', '==', user.uid));
+                const snapshot = await getDocs(q);
+                
+                if (!snapshot.empty) {
+                    userData = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+                    showDashboard();
+                }
+            } else {
+                showAuth();
+            }
+            document.getElementById('loading').style.display = 'none';
+        });
+
+        function showAuth() {
+            document.getElementById('auth').style.display = 'flex';
+            document.getElementById('dashboard').style.display = 'none';
+        }
+
+        async function showDashboard() {
+            document.getElementById('auth').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'block';
+            document.getElementById('welcome-name').textContent = `Welcome, ${userData.name}!`;
+            document.getElementById('welcome-role').textContent = `Role: ${userData.role}`;
+            
+            if (userData.role === 'parent') {
+                document.getElementById('parent-view').style.display = 'block';
+                document.getElementById('family-view').style.display = 'none';
+                await loadParentData();
+            } else {
+                document.getElementById('parent-view').style.display = 'none';
+                document.getElementById('family-view').style.display = 'block';
+                await loadFamilyData();
+            }
+        }
+
+        async function loadParentData() {
+            // Load kids
+            const kidsRef = collection(db, 'kids');
+            const kidsQuery = query(kidsRef, where('userId', '==', currentUser.uid));
+            const kidsSnapshot = await getDocs(kidsQuery);
+            
+            const kidsContainer = document.getElementById('kids-list');
+            if (kidsSnapshot.empty) {
+                kidsContainer.innerHTML = '<p style="text-align: center; color: #999; padding: 2rem;">No kids added yet</p>';
+            } else {
+                kidsContainer.innerHTML = kidsSnapshot.docs.map(doc => {
+                    const kid = doc.data();
+                    return `
+                        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 10px; text-align: center;">
+                            <div style="font-size: 3rem; margin-bottom: 0.5rem;">${kid.photo ? `<img src="${kid.photo}" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid #667eea;">` : '👦'}</div>
+                            <h3 style="color: #333; margin-bottom: 0.25rem;">${kid.name}</h3>
+                            <p style="color: #666;">Age ${kid.age}</p>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            // Load events
+            const eventsRef = collection(db, 'events');
+            const eventsQuery = query(eventsRef, where('userId', '==', currentUser.uid), orderBy('datetime'));
+            const eventsSnapshot = await getDocs(eventsQuery);
+            
+            const eventsContainer = document.getElementById('events-list');
+            if (eventsSnapshot.empty) {
+                eventsContainer.innerHTML = '<p style="text-align: center; color: #999; padding: 2rem;">No events scheduled</p>';
+            } else {
+                eventsContainer.innerHTML = eventsSnapshot.docs.map(doc => {
+                    const event = doc.data();
+                    const date = new Date(event.datetime);
+                    return `
+                        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 10px; border-left: 4px solid #667eea;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                                <strong style="color: #333; font-size: 1.1rem;">${event.title}</strong>
+                                <span style="background: #667eea; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-size: 0.85rem;">${event.kidName}</span>
+                            </div>
+                            <p style="color: #666; margin: 0.25rem 0;">📅 ${date.toLocaleDateString()} at ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                            ${event.location ? `<p style="color: #666; margin: 0.25rem 0;">📍 ${event.location}</p>` : ''}
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            // Load family invitations
+            const invitesRef = collection(db, 'invitations');
+            const invitesQuery = query(invitesRef, where('invitedBy', '==', currentUser.uid));
+            const invitesSnapshot = await getDocs(invitesQuery);
+            
+            const familyContainer = document.getElementById('family-list');
+            if (invitesSnapshot.empty) {
+                familyContainer.innerHTML = '<p style="text-align: center; color: #999; padding: 2rem;">No family members invited yet</p>';
+            } else {
+                familyContainer.innerHTML = invitesSnapshot.docs.map(doc => {
+                    const invite = doc.data();
+                    return `
+                        <div style="background: #f8f9fa; padding: 1.25rem; border-radius: 10px; display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <h4 style="color: #333; margin-bottom: 0.25rem;">${invite.name}</h4>
+                                <p style="color: #666; font-size: 0.9rem;">${invite.email} • ${invite.relationship}</p>
+                            </div>
+                            <span style="padding: 0.35rem 0.85rem; border-radius: 12px; font-size: 0.85rem; font-weight: 600; ${invite.status === 'active' ? 'background: #d1fae5; color: #10b981;' : 'background: #fff4e6; color: #f59e0b;'}">
+                                ${invite.status === 'active' ? 'Active' : 'Invite Sent'}
+                            </span>
+                        </div>
+                    `;
+                }).join('');
+            }
+        }
+
+        async function loadFamilyData() {
+            // Get connected families
+            const connectionsRef = collection(db, 'familyConnections');
+            const connectionsQuery = query(connectionsRef, where('familyMemberId', '==', currentUser.uid));
+            const connections = await getDocs(connectionsQuery);
+            const parentIds = connections.docs.map(doc => doc.data().parentId);
+
+            if (parentIds.length === 0) {
+                document.getElementById('family-kids-list').innerHTML = '<p style="text-align: center; color: #999; padding: 2rem;">No families connected yet</p>';
+                document.getElementById('family-events-list').innerHTML = '<p style="text-align: center; color: #999; padding: 2rem;">No events to show</p>';
+                return;
+            }
+
+            // Get all kids from connected families
+            const kidsRef = collection(db, 'kids');
+            const kidsSnapshot = await getDocs(kidsRef);
+            const familyKids = kidsSnapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(kid => parentIds.includes(kid.userId));
+
+            // Get user names
+            const usersRef = collection(db, 'users');
+            const usersSnapshot = await getDocs(usersRef);
+            const users = usersSnapshot.docs.reduce((acc, doc) => {
+                acc[doc.data().uid] = doc.data();
+                return acc;
+            }, {});
+
+            const kidsContainer = document.getElementById('family-kids-list');
+            if (familyKids.length === 0) {
+                kidsContainer.innerHTML = '<p style="text-align: center; color: #999; padding: 2rem;">No kids yet</p>';
+            } else {
+                kidsContainer.innerHTML = familyKids.map(kid => {
+                    const parent = users[kid.userId];
+                    return `
+                        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 10px; text-align: center;">
+                            <div style="font-size: 3rem; margin-bottom: 0.5rem;">${kid.photo ? `<img src="${kid.photo}" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid #667eea;">` : '👦'}</div>
+                            <h3 style="color: #333; margin-bottom: 0.25rem;">${kid.name}</h3>
+                            <p style="color: #666;">Age ${kid.age}</p>
+                            <p style="font-size: 0.85rem; color: #999; margin-top: 0.5rem;">${parent ? parent.name + "'s child" : ''}</p>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            // Get all events from connected families
+            const eventsRef = collection(db, 'events');
+            const eventsSnapshot = await getDocs(eventsRef);
+            const allEvents = eventsSnapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(event => parentIds.includes(event.userId))
+                .sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+
+            const eventsContainer = document.getElementById('family-events-list');
+            if (allEvents.length === 0) {
+                eventsContainer.innerHTML = '<p style="text-align: center; color: #999; padding: 2rem;">No events yet</p>';
+            } else {
+                eventsContainer.innerHTML = allEvents.map(event => {
+                    const date = new Date(event.datetime);
+                    const parent = users[event.userId];
+                    return `
+                        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 10px; border-left: 4px solid #667eea;">
+                            <div>
+                                <span style="background: #e0e7ff; color: #667eea; padding: 0.25rem 0.75rem; border-radius: 12px; font-size: 0.85rem; font-weight: 600;">${parent ? parent.name + "'s family" : 'Family'}</span>
+                                <strong style="color: #333; font-size: 1.1rem; margin-top: 0.5rem; display: block;">${event.title}</strong>
+                            </div>
+                            <div style="margin-top: 0.5rem;">
+                                <span style="background: #667eea; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-size: 0.85rem;">${event.kidName}</span>
+                            </div>
+                            <p style="color: #666; margin: 0.5rem 0 0.25rem 0;">📅 ${date.toLocaleDateString()} at ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                            ${event.location ? `<p style="color: #666; margin: 0.25rem 0;">📍 ${event.location}</p>` : ''}
+                        </div>
+                    `;
+                }).join('');
+            }
+        }
+
+        // Global functions
+        window.switchTab = function(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.querySelectorAll('.form-view').forEach(f => f.style.display = 'none');
+            document.getElementById(tab).style.display = 'block';
+        };
+
+        window.handleSignup = async function() {
+            const name = document.getElementById('signup-name').value;
+            const email = document.getElementById('signup-email').value;
+            const password = document.getElementById('signup-password').value;
+            const role = document.getElementById('signup-role').value;
+
+            try {
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                await addDoc(collection(db, 'users'), {
+                    uid: userCredential.user.uid,
+                    name,
+                    email,
+                    role,
+                    createdAt: new Date().toISOString()
+                });
+
+                // Check for invitations
+                const invitesRef = collection(db, 'invitations');
+                const q = query(invitesRef, where('email', '==', email.toLowerCase()), where('status', '==', 'pending'));
+                const inviteSnapshot = await getDocs(q);
+
+                if (!inviteSnapshot.empty) {
+                    for (const inviteDoc of inviteSnapshot.docs) {
+                        await updateDoc(doc(db, 'invitations', inviteDoc.id), { status: 'active' });
+                        await addDoc(collection(db, 'familyConnections'), {
+                            familyMemberId: userCredential.user.uid,
+                            parentId: inviteDoc.data().invitedBy,
+                            createdAt: new Date().toISOString()
+                        });
+                    }
+                }
+            } catch (error) {
+                alert(error.message);
+            }
+        };
+
+        window.handleLogin = async function() {
+            const email = document.getElementById('login-email').value;
+            const password = document.getElementById('login-password').value;
+
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+            } catch (error) {
+                alert('Invalid email or password');
+            }
+        };
+
+        window.handleLogout = async function() {
+            await signOut(auth);
+        };
+
+        window.openModal = function(modalId) {
+            document.getElementById(modalId).style.display = 'flex';
+        };
+
+        window.closeModal = function(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        };
+
+        window.handleAddKid = async function() {
+            const name = document.getElementById('kid-name').value;
+            const age = parseInt(document.getElementById('kid-age').value);
+
+            await addDoc(collection(db, 'kids'), {
+                userId: currentUser.uid,
+                name,
+                age,
+                photo: null,
+                createdAt: new Date().toISOString()
+            });
+
+            closeModal('addKidModal');
+            document.getElementById('kid-name').value = '';
+            document.getElementById('kid-age').value = '';
+            await loadParentData();
+        };
+
+        window.handleAddEvent = async function() {
+            const title = document.getElementById('event-title').value;
+            const kidId = document.getElementById('event-kid').value;
+            const datetime = document.getElementById('event-datetime').value;
+            const location = document.getElementById('event-location').value;
+
+            const kidDoc = await getDocs(query(collection(db, 'kids'), where('__name__', '==', kidId)));
+            const kidData = kidDoc.docs[0].data();
+
+            await addDoc(collection(db, 'events'), {
+                userId: currentUser.uid,
+                kidId,
+                kidName: kidData.name,
+                title,
+                datetime,
+                location,
+                createdAt: new Date().toISOString()
+            });
+
+            closeModal('addEventModal');
+            document.getElementById('event-title').value = '';
+            document.getElementById('event-datetime').value = '';
+            document.getElementById('event-location').value = '';
+            await loadParentData();
+        };
+
+        window.openAddEventModal = async function() {
+            const kidsRef = collection(db, 'kids');
+            const q = query(kidsRef, where('userId', '==', currentUser.uid));
+            const snapshot = await getDocs(q);
+
+            const kidSelect = document.getElementById('event-kid');
+            kidSelect.innerHTML = '<option value="">Select a kid</option>';
+
+            if (snapshot.empty) {
+                alert('Please add at least one kid first!');
+                return;
+            }
+
+            snapshot.docs.forEach(doc => {
+                const kid = doc.data();
+                const option = document.createElement('option');
+                option.value = doc.id;
+                option.textContent = kid.name;
+                kidSelect.appendChild(option);
+            });
+
+            openModal('addEventModal');
+        };
+
+        window.handleInviteFamily = async function() {
+            const name = document.getElementById('invite-name').value;
+            const email = document.getElementById('invite-email').value.toLowerCase();
+            const relationship = document.getElementById('invite-relationship').value;
+
+            await addDoc(collection(db, 'invitations'), {
+                invitedBy: currentUser.uid,
+                invitedByName: userData.name,
+                name,
+                email,
+                relationship,
+                status: 'pending',
+                createdAt: new Date().toISOString()
+            });
+
+            closeModal('inviteFamilyModal');
+            document.getElementById('invite-name').value = '';
+            document.getElementById('invite-email').value = '';
+            await loadParentData();
+            alert(`Invitation sent to ${name}!`);
+        };
+    </script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+        }
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            color: #667eea;
+            z-index: 9999;
+        }
+        #auth {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+        .auth-box {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 3rem;
+            width: 100%;
+            max-width: 450px;
+        }
+        .logo { text-align: center; font-size: 2.5rem; margin-bottom: 0.5rem; }
+        .title { text-align: center; font-size: 2rem; font-weight: bold; color: #667eea; margin-bottom: 2rem; }
+        .tabs { display: flex; gap: 1rem; margin-bottom: 2rem; border-bottom: 2px solid #e0e0e0; }
+        .tab {
+            flex: 1; padding: 0.75rem; background: none; border: none;
+            font-size: 1.1rem; font-weight: 600; color: #999; cursor: pointer;
+            border-bottom: 3px solid transparent;
+        }
+        .tab.active { color: #667eea; border-bottom-color: #667eea; }
+        .form-view { display: none; }
+        .form-view.active { display: block; }
+        .form-group { margin-bottom: 1.5rem; }
+        label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
+        input, select {
+            width: 100%; padding: 0.75rem; border: 2px solid #e0e0e0;
+            border-radius: 8px; font-size: 1rem;
+        }
+        button.submit {
+            width: 100%; padding: 1rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; border: none; border-radius: 8px; font-size: 1.1rem;
+            font-weight: 600; cursor: pointer;
+        }
+        #dashboard { display: none; }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; padding: 1rem 2rem; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .header h1 { font-size: 1.5rem; }
+        .logout-btn {
+            background: white; color: #667eea; border: none;
+            padding: 0.5rem 1.5rem; border-radius: 6px; font-weight: 600; cursor: pointer;
+        }
+        .main-content { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
+        .section {
+            background: white; padding: 2rem; border-radius: 12px;
+            margin-bottom: 2rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            margin-bottom: 1.5rem; display: flex;
+            justify-content: space-between; align-items: center;
+        }
+        .add-btn {
+            background: #667eea; color: white; border: none;
+            padding: 0.5rem 1.5rem; border-radius: 6px; font-weight: 600; cursor: pointer;
+        }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
+        .modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000;
+        }
+        .modal-content {
+            background: white; padding: 2rem; border-radius: 12px;
+            width: 90%; max-width: 500px;
+        }
+        .modal-header {
+            display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;
+        }
+        .modal-header h3 { color: #667eea; font-size: 1.5rem; }
+        .close-btn {
+            background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">Loading FamBams...</div>
+
+    <div id="auth">
+        <div class="auth-box">
+            <div class="logo">🎯</div>
+            <div class="title">FamBams</div>
+
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('signup')">Sign Up</button>
+                <button class="tab" onclick="switchTab('login')">Log In</button>
+            </div>
+
+            <div id="signup" class="form-view" style="display: block;">
+                <div class="form-group">
+                    <label>Full Name</label>
+                    <input type="text" id="signup-name" placeholder="Enter your name">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="signup-email" placeholder="you@example.com">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="signup-password" placeholder="At least 6 characters">
+                </div>
+                <div class="form-group">
+                    <label>I am a...</label>
+                    <select id="signup-role">
+                        <option value="parent">Parent</option>
+                        <option value="grandparent">Grandparent</option>
+                        <option value="family">Other Family Member</option>
+                    </select>
+                </div>
+                <button class="submit" onclick="handleSignup()">Create Account</button>
+            </div>
+
+            <div id="login" class="form-view">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="login-email" placeholder="you@example.com">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="login-password" placeholder="Enter your password">
+                </div>
+                <button class="submit" onclick="handleLogin()">Log In</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="dashboard">
+        <div class="header">
+            <h1>🎯 FamBams</h1>
+            <button class="logout-btn" onclick="handleLogout()">Log Out</button>
+        </div>
+
+        <div class="main-content">
+            <div class="section">
+                <h2 id="welcome-name"></h2>
+                <p id="welcome-role"></p>
+            </div>
+
+            <div id="parent-view">
+                <div class="section">
+                    <h2>
+                        Your Kids
+                        <button class="add-btn" onclick="openModal('addKidModal')">+ Add Kid</button>
+                    </h2>
+                    <div id="kids-list" class="grid"></div>
+                </div>
+
+                <div class="section">
+                    <h2>
+                        Upcoming Events
+                        <button class="add-btn" onclick="openAddEventModal()">+ Add Event</button>
+                    </h2>
+                    <div id="events-list"></div>
+                </div>
+
+                <div class="section">
+                    <h2>
+                        Extended Family
+                        <button class="add-btn" onclick="openModal('inviteFamilyModal')">+ Invite Family</button>
+                    </h2>
+                    <div id="family-list"></div>
+                </div>
+            </div>
+
+            <div id="family-view">
+                <div class="section">
+                    <h2>All Kids</h2>
+                    <div id="family-kids-list" class="grid"></div>
+                </div>
+
+                <div class="section">
+                    <h2>Upcoming Events</h2>
+                    <div id="family-events-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="addKidModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add a Kid</h3>
+                <button class="close-btn" onclick="closeModal('addKidModal')">&times;</button>
+            </div>
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="kid-name" placeholder="Kid's name">
+            </div>
+            <div class="form-group">
+                <label>Age</label>
+                <input type="number" id="kid-age" placeholder="Age" min="1" max="18">
+            </div>
+            <button class="submit" onclick="handleAddKid()">Add Kid</button>
+        </div>
+    </div>
+
+    <div id="addEventModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add an Event</h3>
+                <button class="close-btn" onclick="closeModal('addEventModal')">&times;</button>
+            </div>
+            <div class="form-group">
+                <label>Event Title</label>
+                <input type="text" id="event-title" placeholder="Soccer game, recital, etc.">
+            </div>
+            <div class="form-group">
+                <label>Which Kid?</label>
+                <select id="event-kid"></select>
+            </div>
+            <div class="form-group">
+                <label>Date & Time</label>
+                <input type="datetime-local" id="event-datetime">
+            </div>
+            <div class="form-group">
+                <label>Location</label>
+                <input type="text" id="event-location" placeholder="Where?">
+            </div>
+            <button class="submit" onclick="handleAddEvent()">Add Event</button>
+        </div>
+    </div>
+
+    <div id="inviteFamilyModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Invite Family</h3>
+                <button class="close-btn" onclick="closeModal('inviteFamilyModal')">&times;</button>
+            </div>
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="invite-name" placeholder="Grandma, Uncle Joe, etc.">
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="invite-email" placeholder="their@email.com">
+            </div>
+            <div class="form-group">
+                <label>Relationship</label>
+                <select id="invite-relationship">
+                    <option value="grandparent">Grandparent</option>
+                    <option value="aunt/uncle">Aunt/Uncle</option>
+                    <option value="cousin">Cousin</option>
+                    <option value="family">Other Family</option>
+                </select>
+            </div>
+            <button class="submit" onclick="handleInviteFamily()">Send Invitation</button>
+        </div>
+    </div>
+</body>
+</html>
